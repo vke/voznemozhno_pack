@@ -514,7 +514,7 @@ int UnpackFull(const char *szInputBufferFilename, const char *szOutputBufferFile
 	size_t stOutputBufferSize = 0;
 	nError = VoznemozhnoUnpackFull(pInputBuffer, stInputBufferSize, NULL, 0, &stOutputBufferSize);
 	if (nError) {
-		printf("Error %u from VoznemozhnoPackFull\r\n", nError);
+		printf("Error %u from VoznemozhnoUnpackFull\r\n", nError);
 		free(pInputBuffer);
 		return nError;
 	}
@@ -586,7 +586,7 @@ int PackDiff(const char *szInputBufferFilename, const char *szOutputBufferFilena
 	size_t stPackedSize = 0;
 	nError = VoznemozhnoPackDiff(pInputBuffer, stInputBufferSize, pOutputBuffer, stOutputBufferSize, &stPackedSize);
 	if (nError) {
-		printf("Error %u from VoznemozhnoPackFull\r\n", nError);
+		printf("Error %u from VoznemozhnoPackDiff\r\n", nError);
 		free(pInputBuffer);
 		free(pOutputBuffer);
 		return nError;
