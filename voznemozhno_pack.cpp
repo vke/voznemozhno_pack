@@ -84,6 +84,21 @@ size_t FindMaxPos(uint16_t *pBuffer, size_t stBufferSize)
 	return stFoundPos;
 }
 
+// FIXME: expand range from 1-255 to 0-255 for 1-256 repeat bytes
+uint8_t FindPattern1(uint8_t *pBuffer, size_t stBufferSize, size_t stBuffPtr)
+{
+	uint8_t btRepeats = 1;
+	uint8_t btNeedle = pBuffer[stBuffPtr];
+	while (++stBuffPtr < stBufferSize) {
+		if (pBuffer[stBuffPtr] != btNeedle)
+			break;
+		btRepeats++;
+		if (btRepeats == 255)
+			break;
+	}
+	return btRepeats;
+}
+
 // FIXME: no proper buffer size checks
 int VoznemozhnoPackFull(uint8_t *pBuffer, size_t stBufferSize, uint8_t *pResult, size_t stResultBufferSize, size_t *pStResultLength)
 {
@@ -185,11 +200,23 @@ int VoznemozhnoPackFull(uint8_t *pBuffer, size_t stBufferSize, uint8_t *pResult,
 			case VPF_SKIP_S3:
 			case VPF_SKIP_S4:
 			case VPF_SKIP_S5:
+			case VPF_REPEAT:
 			case VPF_ESCAPE:
 			case VPF_END:
 				pResult[stResultPtr++] = VPF_ESCAPE;
-			default:
 				pResult[stResultPtr++] = pBuffer[stBuffPtr];
+				break;
+			default:
+				// FIXME: include escaped bytes also
+				uint8_t btRepeats = FindPattern1(pBuffer, stBufferSize, stBuffPtr);
+				if (btRepeats > 3) {
+					pResult[stResultPtr++] = VPF_REPEAT;
+					pResult[stResultPtr++] = btRepeats;
+					pResult[stResultPtr++] = pBuffer[stBuffPtr];
+					stBuffPtr += btRepeats - 1;
+				} else {
+					pResult[stResultPtr++] = pBuffer[stBuffPtr];
+				}
 		}
 		stBuffPtr++;
 	}
@@ -254,6 +281,18 @@ int VoznemozhnoUnpackFull(uint8_t *pPackedBuffer, size_t stPackedBufferSize, uin
 				stUnpackedPtr += skipSizes[5];
 				stPackedPtr++;
 				break;
+			case VPF_REPEAT: {
+				uint8_t btRepSize = pPackedBuffer[++stPackedPtr];
+				uint8_t btByte = pPackedBuffer[++stPackedPtr];
+				stPackedPtr++;
+				if (pFramebuffer) {
+					for (size_t stI = 0; stI < btRepSize; stI++)
+						pFramebuffer[stUnpackedPtr++] = btByte;
+				} else {
+					stUnpackedPtr += btRepSize;
+				}
+				break;
+			}
 			case VPF_ESCAPE: {
 				if (pFramebuffer)
 					pFramebuffer[stUnpackedPtr++] = pPackedBuffer[++stPackedPtr];
@@ -335,11 +374,23 @@ int VoznemozhnoPackDiff(uint8_t *pBuffer, size_t stBufferSize, uint8_t *pResult,
 			case VPD_SKIP5:
 			case VPD_SKIP6:
 			case VPD_SKIP7:
+			case VPD_REPEAT:
 			case VPD_ESCAPE:
 			case VPD_END:
 				pResult[stResultPtr++] = VPD_ESCAPE;
-			default:
 				pResult[stResultPtr++] = pBuffer[stBuffPtr];
+				break;
+			default:
+				// FIXME: include escaped bytes also
+				uint8_t btRepeats = FindPattern1(pBuffer, stBufferSize, stBuffPtr);
+				if (btRepeats > 3) {
+					pResult[stResultPtr++] = VPD_REPEAT;
+					pResult[stResultPtr++] = btRepeats;
+					pResult[stResultPtr++] = pBuffer[stBuffPtr];
+					stBuffPtr += btRepeats - 1;
+				} else {
+					pResult[stResultPtr++] = pBuffer[stBuffPtr];
+				}
 		}
 		stBuffPtr++;
 	}
@@ -403,6 +454,18 @@ int VoznemozhnoUnpackDiff(uint8_t *pPackedBuffer, size_t stPackedBufferSize, uin
 			case VPD_SKIP7: {
 				stUnpackedPtr += 7;
 				stPackedPtr++;
+				break;
+			}
+			case VPD_REPEAT: {
+				uint8_t btRepSize = pPackedBuffer[++stPackedPtr];
+				uint8_t btByte = pPackedBuffer[++stPackedPtr];
+				stPackedPtr++;
+				if (pFramebuffer) {
+					for (size_t stI = 0; stI < btRepSize; stI++)
+						pFramebuffer[stUnpackedPtr++] = btByte;
+				} else {
+					stUnpackedPtr += btRepSize;
+				}
 				break;
 			}
 			case VPD_ESCAPE: {
@@ -670,9 +733,138 @@ int UnpackDiff(const char *szInputBufferFilename, const char *szOutputBufferFile
 	return 0;
 }
 
+int CompareFramebuffers(uint8_t *pBuffer1, size_t stSize1, uint8_t *pBuffer2, size_t stSize2)
+{
+	if (stSize1 != stSize2) {
+		return 1;
+	}
+	for (size_t stI = 0; stI < stSize1; stI++) {
+		if (pBuffer1[stI] != pBuffer2[stI]) {
+			return 2;
+		}
+	}
+	return 0;
+}
+
+int BenchmarkFull()
+{
+	int nError = 0;
+
+	printf("BenchmarkFull started\r\n");
+
+	srand(1);
+
+	size_t stOrigTotal = 0;
+	size_t stPackedTotal = 0;
+
+	for (size_t stI = 0; stI < 1000000; stI++) {
+		uint8_t buffOrig[4736];
+		uint8_t buffPacked[65536];
+		uint8_t buffUnpacked[65536];
+		memset(buffOrig, 0xFF, sizeof(buffOrig));
+		memset(buffPacked, 0xFF, sizeof(buffPacked));
+		memset(buffUnpacked, 0xFF, sizeof(buffUnpacked));
+
+		int nRandomBytes = rand() % 32;
+		for (int i = 0; i < nRandomBytes; i++) {
+			int nRandomPos = rand() % 4736;
+			buffOrig[nRandomPos] = rand() & 0xFF;
+		}
+		size_t stPackedBufferSize = 0;
+		nError = VoznemozhnoPackFull(buffOrig, sizeof(buffOrig), buffPacked, sizeof(buffPacked), &stPackedBufferSize);
+		if (nError) {
+			printf("Benchmark error, VoznemozhnoPackFull, loop %lu\r\n", stI);
+			return nError;
+		}
+		size_t stUnpackedBufferSize = 0;
+		nError = VoznemozhnoUnpackFull(buffPacked, stPackedBufferSize, buffUnpacked, sizeof(buffUnpacked), &stUnpackedBufferSize);
+		if (nError) {
+			printf("Benchmark error, VoznemozhnoUnpackFull, loop %lu\r\n", stI);
+			return nError;
+		}
+
+		nError = CompareFramebuffers(buffOrig, 4736, buffUnpacked, 4736);
+		if (nError) {
+			printf("Benchmark error, full, CompareFramebuffers, loop %lu\r\n", stI);
+			return nError;
+		}
+
+		stOrigTotal += 4736;
+		stPackedTotal += stPackedBufferSize;
+	}
+
+	printf("Full orig: %lu, packed: %lu\r\n", stOrigTotal, stPackedTotal);
+
+	return 0;
+}
+
+int BenchmarkDiff()
+{
+	int nError = 0;
+
+	printf("BenchmarkDiff started\r\n");
+
+	srand(1);
+
+	size_t stOrigTotal = 0;
+	size_t stPackedTotal = 0;
+
+	for (size_t stI = 0; stI < 1000000; stI++) {
+		uint8_t buffOrig[4736];
+		uint8_t buffPacked[65536];
+		uint8_t buffUnpacked[65536];
+		memset(buffOrig, 0xFF, sizeof(buffOrig));
+		memset(buffPacked, 0xFF, sizeof(buffPacked));
+		memset(buffUnpacked, 0xFF, sizeof(buffUnpacked));
+
+		int nRandomBytes = rand() % 32;
+		for (int i = 0; i < nRandomBytes; i++) {
+			int nRandomPos = rand() % 4736;
+			buffOrig[nRandomPos] = rand() & 0xFF;
+		}
+		size_t stPackedBufferSize = 0;
+		nError = VoznemozhnoPackDiff(buffOrig, sizeof(buffOrig), buffPacked, sizeof(buffPacked), &stPackedBufferSize);
+		if (nError) {
+			printf("Benchmark error, VoznemozhnoPackDiff, loop %lu\r\n", stI);
+			return nError;
+		}
+		size_t stUnpackedBufferSize = 0;
+		nError = VoznemozhnoUnpackDiff(buffPacked, stPackedBufferSize, buffUnpacked, sizeof(buffUnpacked), &stUnpackedBufferSize);
+		if (nError) {
+			printf("Benchmark error, VoznemozhnoUnpackDiff, loop %lu\r\n", stI);
+			return nError;
+		}
+
+		nError = CompareFramebuffers(buffOrig, 4736, buffUnpacked, 4736);
+		if (nError) {
+			printf("Benchmark error, diff, CompareFramebuffers, loop %lu\r\n", stI);
+			return nError;
+		}
+
+		stOrigTotal += 4736;
+		stPackedTotal += stPackedBufferSize;
+	}
+
+	printf("Diff orig: %lu, packed: %lu\r\n", stOrigTotal, stPackedTotal);
+
+	return 0;
+}
+
 int main()
 {
 	int nError = 0;
+
+	// nError = BenchmarkFull();
+	// if (nError) {
+	// 	printf("Benchmark full failed\r\n");
+	// 	return nError;
+	// }
+
+	// nError = BenchmarkDiff();
+	// if (nError) {
+	// 	printf("Benchmark diff failed\r\n");
+	// 	return nError;
+	// }
 
 	if (nError = PackFull("buffer_full.bin", "buffer_full_packed.bin"))
 		return nError;

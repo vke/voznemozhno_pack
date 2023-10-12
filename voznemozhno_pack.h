@@ -8,6 +8,7 @@
 #define VPF_SKIP_S3  0x0A
 #define VPF_SKIP_S4  0x50
 #define VPF_SKIP_S5  0x48
+#define VPF_REPEAT   0x14
 #define VPF_ESCAPE   0x4C
 #define VPF_END      0x46
 
@@ -21,5 +22,6 @@
 #define VPD_SKIP5    0x48
 #define VPD_SKIP6    0x62
 #define VPD_SKIP7    0x1A
+#define VPD_REPEAT   0x4D
 #define VPD_ESCAPE   0x4C
 #define VPD_END      0x46
